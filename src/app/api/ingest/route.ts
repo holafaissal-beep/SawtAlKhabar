@@ -39,7 +39,7 @@ export async function POST(request: Request) {
           const publishedAt = item.isoDate || item.pubDate || new Date().toISOString();
           const { data: existing } = await supabase.from("news_sources").select("id").eq("url", url).maybeSingle();
           if (existing) continue;
-          const sourceText = [title, item.contentSnippet || item.summary || ""].join("\n").slice(0, 2200);
+          const sourceText = [title, item.contentSnippet || item.content || ""].join("\n").slice(0, 2200);
           const prompt = `Create an original, factual news brief using ONLY the supplied RSS headline and short description. Do not invent details or claim independent verification. If the supplied information is insufficient, return status review. Do not imitate or translate the source article. Do not use quotations. Output JSON only with keys: category (one of morocco,spain,france,international,sports,economy), sensitive (boolean), confidence (number 0-1), ar/es/fr (each object with title, summary, body). Each body should be a concise 2-3 paragraph original brief; summaries max 35 words. Preserve uncertainty and dates. Source: ${feed.name}; region: ${feed.region}; RSS text: ${sourceText}`;
           const response = await ai.responses.create({ model, input: prompt });
           const raw = response.output_text || "";
