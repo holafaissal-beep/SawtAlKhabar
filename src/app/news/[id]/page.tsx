@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
@@ -17,13 +18,13 @@ export default async function NewsArticle({params,searchParams}:{params:Promise<
   const translations = story.translations as Record<string,{title?:string;summary?:string;body?:string}>;
   const article=translations[lang]||Object.values(translations)[0]||{};
   return <main lang={lang} dir={dir}>
-    <div className="topline"><div className="wrap toplineInner"><a href="/">صوت الخبر</a><span>Sawt Al Khabar</span></div></div>
+    <div className="topline"><div className="wrap toplineInner"><Link href="/">صوت الخبر</Link><span>Sawt Al Khabar</span></div></div>
     <article className="wrap articlePage">
-      <a className="eyebrow" href={`/?lang=${lang}`}>← {labels.back}</a>
+      <Link className="eyebrow" href={`/?lang=${lang}`}>← {labels.back}</Link>
       <h1>{article.title}</h1>
       <p className="articleLead">{article.summary}</p>
       <div className="articleBody">{article.body}</div>
-      <section className="sourceList"><h2>{labels.sources}</h2>{(sources||[]).map((source:any)=><a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.name} — {source.url}</a>)}</section>
+      <section className="sourceList"><h2>{labels.sources}</h2>{((sources||[]) as Array<{url:string;name:string}>).map((source)=><a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.name} — {source.url}</a>)}</section>
     </article>
   </main>;
 }
