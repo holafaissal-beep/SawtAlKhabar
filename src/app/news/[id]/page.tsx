@@ -14,7 +14,7 @@ export default async function NewsArticle({params,searchParams}:{params:Promise<
   const {data:story}=await supabase.from("news_articles").select("id,category,translations,published_at").eq("id",id).eq("status","published").maybeSingle();
   if(!story)notFound();
   const {data:sources}=await supabase.from("news_sources").select("name,url,source_published_at").eq("article_id",id);
-  const article=story.translations?.[lang]||Object.values(story.translations||{})[0]||{};
+  const translations = story.translations as Record<string,{title?:string;summary?:string;body?:string}>;\n  const article=translations[lang]||Object.values(translations)[0]||{};
   return <main lang={lang} dir={dir}>
     <div className="topline"><div className="wrap toplineInner"><a href="/">صوت الخبر</a><span>Sawt Al Khabar</span></div></div>
     <article className="wrap articlePage">
