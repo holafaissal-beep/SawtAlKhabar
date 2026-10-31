@@ -24,7 +24,7 @@ export default async function Home({searchParams}:{searchParams:Promise<{lang?:s
   const t = copy[lang];
   const dir = lang==="ar"?"rtl":"ltr";
   const sections = Object.values(categoryNames[lang]);
-  const stories = await getLatestStories();
+  const stories = (await getLatestStories()) as Array<{id:string;category:string;translations:Record<string,{title?:string;summary?:string}>}>;
   return <main lang={lang} dir={dir}>
     <div className="topline"><div className="wrap toplineInner"><span>صوت الحقيقة.. أخبار بلا حدود</span><span>Sawt Al Khabar</span></div></div>
     <header className="wrap header">
