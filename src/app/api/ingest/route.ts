@@ -1,21 +1,29 @@
 import { NextResponse } from "next/server";
 import Parser from "rss-parser";
-import OpenAI from "openai";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const parser = new Parser({ timeout: 12000, headers: { "User-Agent": "SawtAlKhabarBot/0.1 (+contact site owner)" } });
+const parser = new Parser({ timeout: 12000, headers: { "User-Agent": "SawtAlKhabarBot/1.0" } });
+
+// Import only RSS headlines and short descriptions, not full articles.
 const feeds = [
-  { name:"MAP English", url:"https://www.mapnews.ma/en/rss.xml", region:"Morocco", category:"morocco", language:"en" },
-  { name:"RTVE Noticias", url:"https://www.rtve.es/api/noticias.rss", region:"Spain", category:"spain", language:"es" },
-  { name:"France 24 English", url:"https://www.france24.com/en/rss", region:"France", category:"france", language:"en" },
-  { name:"BBC World", url:"https://feeds.bbci.co.uk/news/world/rss.xml", region:"International", category:"international", language:"en" },
-  { name:"BBC Sport", url:"https://feeds.bbci.co.uk/sport/rss.xml", region:"International", category:"sports", language:"en" },
-  { name:"Euronews Business", url:"https://www.euronews.com/rss?level=theme&name=business", region:"International", category:"economy", language:"en" }
-];
-const sensitive = /war|attack|killed|death|election|minister|president|court|arrest|accus|terror|health|virus|earthquake|flood|fire|explosion|حرب|هجوم|مقتل|وفاة|انتخابات|وزير|رئيس|محكمة|اعتقال|اتهام|صحة|زلزال|فيضانات|حريق|انفجار|guerre|attaque|mort|élection|ministre|président|tribunal|arrestation|santé|séisme/i;
+  { name: "MAP Arabic", url: "https://www.mapnews.ma/ar/rss.xml", category: "morocco", language: "ar" },
+  { name: "MAP English", url: "https://www.mapnews.ma/en/rss.xml", category: "morocco", language: "en" },
+  { name: "RTVE Noticias", url: "https://www.rtve.es/api/noticias.rss", category: "spain", language: "es" },
+  { name: "France 24 Français", url: "https://www.france24.com/fr/rss", category: "france", language: "fr" },
+  { name: "France 24 English", url: "https://www.france24.com/en/rss", category: "france", language: "en" },
+  { name: "BBC World", url: "https://feeds.bbci.co.uk/news/world/rss.xml", category: "international", language: "en" },
+  { name: "BBC Sport", url: "https://feeds.bbci.co.uk/sport/rss.xml", category: "sports", language: "en" },
+  { name: "Euronews Business", url: "https://www.euronews.com/rss?level=theme&name=business", category: "economy", language: "en" }
+] as const;
+
+const sensitive = /war|attack|killed|death|election|minister|president|court|arrest|accus|terror|health|virus|earthquake|flood|fire|explosion|حرب|هجوم|مقتل|وفاة|انتخابات|وزير|رئيس|محكمة|اعتقال|اتهام|صحة|زلزال|فيضانات|حريق|انفجار|guerre|attaque|mort|élection|ministre|président|tribunal|arrestation|santé|séisme|guerra|ataque|muert[eo]|elección|ministro|presidente|tribunal|detención|salud|terremoto|inundación|incendio/i;
+
+function cleanText(value: string, max: number) {
+  return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+}
 
 export async function POST(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -24,52 +32,65 @@ export async function POST(request: Request) {
   }
   try {
     const supabase = getSupabaseAdmin();
-    const ai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const model = process.env.OPENAI_MODEL;
-    if (!model) throw new Error("Set OPENAI_MODEL to a model enabled for your API account.");
-    const results: Array<{feed:string; imported:number; error?:string}> = [];
+    const results: Array<{ feed: string; imported: number; skippedSensitive?: number; error?: string }> = [];
     for (const feed of feeds) {
       try {
         const parsed = await parser.parseURL(feed.url);
         let imported = 0;
-        for (const item of (parsed.items || []).slice(0, 12)) {
+        let skippedSensitive = 0;
+        for (const item of (parsed.items || []).slice(0, 15)) {
           const url = item.link?.trim();
-          const title = item.title?.trim();
-          if (!url || !title) continue;
-          const publishedAt = item.isoDate || item.pubDate || new Date().toISOString();
-          const { data: existing } = await supabase.from("news_sources").select("id").eq("url", url).maybeSingle();
+          const title = cleanText(item.title || "", 240);
+          if (!url || !title || !/^https?:\/\//i.test(url)) continue;
+          const { data: existing, error: lookupError } = await supabase.from("news_sources").select("id").eq("url", url).maybeSingle();
+          if (lookupError) throw lookupError;
           if (existing) continue;
-          const sourceText = [title, item.contentSnippet || item.content || ""].join("\n").slice(0, 2200);
-          const prompt = `Create an original, factual news brief using ONLY the supplied RSS headline and short description. Do not invent details or claim independent verification. If the supplied information is insufficient, return status review. Do not imitate or translate the source article. Do not use quotations. Output JSON only with keys: category (one of morocco,spain,france,international,sports,economy), sensitive (boolean), confidence (number 0-1), ar/es/fr (each object with title, summary, body). Each body should be a concise 2-3 paragraph original brief; summaries max 35 words. Preserve uncertainty and dates. Source: ${feed.name}; region: ${feed.region}; RSS text: ${sourceText}`;
-          const response = await ai.responses.create({ model, input: prompt });
-          const raw = response.output_text || "";
-          const cleaned = raw.replace(/^```json\s*/i,"").replace(/\s*```$/,"");
-          const article = JSON.parse(cleaned);
-          const score = Number(article.confidence || 0);
-          const needsReview = Boolean(article.sensitive) || sensitive.test(sourceText) || score < 0.78;
+
+          const description = cleanText(item.contentSnippet || item.summary || "", 900);
+          if (sensitive.test(`${title} ${description}`)) {
+            skippedSensitive++;
+            continue;
+          }
+          const date = item.isoDate || item.pubDate ? new Date(item.isoDate || item.pubDate || "") : new Date();
+          const publishedAt = Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+          const translations = {
+            [feed.language]: {
+              title,
+              summary: description || title,
+              body: description || title
+            }
+          };
           const { data: inserted, error: insertError } = await supabase.from("news_articles").insert({
-            category: ["morocco","spain","france","international","sports","economy"].includes(article.category) ? article.category : feed.category,
-            status: needsReview ? "review" : "draft",
-            confidence: score,
-            is_sensitive: Boolean(article.sensitive) || sensitive.test(sourceText),
-            translations: article,
-            original_published_at: new Date(publishedAt).toISOString(),
-            published_at: null
+            category: feed.category,
+            status: "published",
+            confidence: 0.8,
+            is_sensitive: false,
+            translations,
+            original_published_at: publishedAt,
+            published_at: new Date().toISOString()
           }).select("id").single();
           if (insertError) throw insertError;
           const { error: sourceError } = await supabase.from("news_sources").insert({
-            article_id: inserted.id, name: feed.name, url, source_language: feed.language, source_published_at: new Date(publishedAt).toISOString()
+            article_id: inserted.id,
+            name: feed.name,
+            url,
+            source_language: feed.language,
+            source_published_at: publishedAt
           });
           if (sourceError) throw sourceError;
           imported++;
         }
-        results.push({ feed:feed.name, imported });
-      } catch (e) {
-        results.push({ feed:feed.name, imported:0, error:e instanceof Error ? e.message : "Feed failed" });
+        results.push({ feed: feed.name, imported, skippedSensitive });
+      } catch (error) {
+        results.push({ feed: feed.name, imported: 0, error: error instanceof Error ? error.message : "Feed failed" });
       }
     }
-    return NextResponse.json({ ok:true, results, note:"New items are held as drafts or review items. Public publishing is intentionally disabled until source corroboration and editorial approval are configured." });
-  } catch (e) {
-    return NextResponse.json({ error:e instanceof Error ? e.message : "Ingestion failed" }, { status:500 });
+    return NextResponse.json({
+      ok: true,
+      results,
+      note: "Non-sensitive RSS headlines and short descriptions are published automatically. High-risk topics are skipped. Stories remain in their source language; automatic translation is not enabled."
+    });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Ingestion failed" }, { status: 500 });
   }
 }
